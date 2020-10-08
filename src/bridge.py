@@ -14,6 +14,7 @@ from typing import NamedTuple
 import logging
 import numbers
 import atexit
+from jsonpath_ng import jsonpath, parse
 import paho.mqtt.client as mqtt
 from influxdb import InfluxDBClient
 
@@ -74,19 +75,33 @@ class MqttBridge():
                 pass
 
         for input in config['input']:
-            topic = input['topic']
+            mqtt_topic = input['topic']
 
-            if not r'{location}' in topic:
-                raise ValueError(r'topic must contain {location}')
+            def get(key, default):
+                try:
+                    return input[key]
+                except KeyError:
+                    return default
+
+            topic = {
+                'mqtt_topic': re.sub(r'\{\w+\}', '+', mqtt_topic),
+                'regex': re.sub(r'\{\w+\}', '([^/]+)', mqtt_topic),
+                'tags': get('tags', {}),
+                'topic_tags': [m.group(1) for m in re.finditer(r'\{(\w+)\}', mqtt_topic)],
+                'measurement': get('measurement', 'from_json_keys'),
+                'value_map': get('value_map', {})
+            }
+
+            logging.debug(json.dumps(topic))
+
+            topic['regex'] = re.compile(topic['regex'])
+
+            try:
+                topic['jsonpath'] = parse(input['jsonpath'])
+            except KeyError:
+                pass
             
-            if not 'tags' in input:
-                input['tags'] = {}
-
-            self.topics.append({
-                'mqtt_topic': topic.replace(r'{location}', '+'),
-                'regex': re.compile(topic.replace(r'{location}', '([^/]+)')),
-                'tags': input['tags']
-            })
+            self.topics.append(topic)
 
     def start(self):
         logging.info('starting')
@@ -131,19 +146,39 @@ class MqttBridge():
             if msg.retain:
                 return
 
-            payload_json = json.loads(payload_as_string)
-
             for topic in self.topics:
                 match = topic['regex'].match(msg.topic)
                 if match:
-                    location = match.group(1)
-            
-                    for k,v in payload_json.items():
-                        if isinstance(v, numbers.Number):
-                            self._send_sensor_data_to_influxdb(k, {'location': location, **topic['tags']}, v)
+                    tags = {**topic['tags']}
+                    for i, tag in enumerate(topic['topic_tags']):
+                        tags[tag] = match.group(i+1)
+
+                    if 'jsonpath' in topic:
+                        payload_json = json.loads(payload_as_string)
+                        for m in topic['jsonpath'].find(payload_json):
+                            self._parse_payload(topic, m.value, tags, True)
+                    else:
+                        self._parse_payload(topic, payload_as_string, tags, False)
 
         except Exception as e:
             logging.error('Encountered error in mqtt message handler: '+str(e))
+
+    def _parse_payload(self, topic, payload, tags, already_json_parsed=False):
+        def map_value(val):
+            try:
+                return topic['value_map'][val]
+            except KeyError:
+                return val
+
+        if topic['measurement'] == 'from_json_keys':
+            if not already_json_parsed:
+                payload = json.loads(payload)
+            for k,v in payload.items():
+                v = map_value(v)
+                if isinstance(v, numbers.Number):
+                    self._send_sensor_data_to_influxdb(k, tags, v)
+        else:
+            self._send_sensor_data_to_influxdb(topic['measurement'], tags, map_value(payload))
 
     def _send_sensor_data_to_influxdb(self, measurement, tags, value):
         json_body = [
