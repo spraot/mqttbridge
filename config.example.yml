@@ -1,0 +1,36 @@
+mqtt_server_ip: localhost
+mqtt_server_port: 1883
+mqtt_server_user: mqtt
+mqtt_server_password: ''
+state_topic: db_bridge/state
+
+influxdb_address: localhost
+influxdb_user: root
+influxdb_password: root
+influxdb_database: house_db
+
+input:
+  - topic: 'zigbee2mqtt/{location}/temp_sensor'
+    tags:
+      source: sensor
+    measurement: from_json_keys
+  - topic: 'revpi/heat/{location}/state'
+    tags:
+      source: control
+    measurement: from_json_keys
+  - topic: revpi/buttons/{location}/{button}/state
+    measurement: button_pressed
+    value_map:
+      up: 0
+      down: 1
+  - topic: revpi/io/{location}/lights/state
+    measurement: lights_on
+    value_map:
+      'ON': 1
+      'OFF': 0
+  - topic: zigbee2mqtt/{location}/lights
+    jsonpath: 'state'
+    measurement: lights_on
+    value_map:
+      'ON': 1
+      'OFF': 0
