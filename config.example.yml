@@ -18,6 +18,9 @@ input:
     tags:
       source: control
     measurement: from_json_keys
+    key_map:
+      temperature: set_temperature
+      current_temperature: temperature
   - topic: revpi/buttons/{location}/{button}/state
     measurement: button_pressed
     value_map:
