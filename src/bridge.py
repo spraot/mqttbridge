@@ -85,10 +85,11 @@ class MqttBridge():
 
             topic = {
                 'mqtt_topic': re.sub(r'\{\w+\}', '+', mqtt_topic),
-                'regex': re.sub(r'\{\w+\}', '([^/]+)', mqtt_topic),
+                'regex': '^'+re.sub(r'\{\w+\}', '([^/]+)', mqtt_topic)+'$',
                 'tags': get('tags', {}),
                 'topic_tags': [m.group(1) for m in re.finditer(r'\{(\w+)\}', mqtt_topic)],
                 'measurement': get('measurement', 'from_json_keys'),
+                'key_map': get('key_map', {}),
                 'value_map': get('value_map', {})
             }
 
@@ -164,6 +165,12 @@ class MqttBridge():
             logging.error('Encountered error in mqtt message handler: '+str(e))
 
     def _parse_payload(self, topic, payload, tags, already_json_parsed=False):
+        def map_key(val):
+            try:
+                return topic['key_map'][val]
+            except KeyError:
+                return val
+
         def map_value(val):
             try:
                 return topic['value_map'][val]
@@ -176,7 +183,7 @@ class MqttBridge():
             for k,v in payload.items():
                 v = map_value(v)
                 if isinstance(v, numbers.Number):
-                    self._send_sensor_data_to_influxdb(k, tags, v)
+                    self._send_sensor_data_to_influxdb(map_key(k), tags, v)
         else:
             self._send_sensor_data_to_influxdb(topic['measurement'], tags, map_value(payload))
 
