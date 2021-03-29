@@ -102,6 +102,12 @@ class MqttBridge():
             except KeyError:
                 pass
             
+            try:
+                len(input['json_keys_include'])
+                topic['json_keys_include'] = input['json_keys_include']
+            except KeyError:
+                pass
+            
             self.topics.append(topic)
 
     def start(self):
@@ -162,28 +168,29 @@ class MqttBridge():
                         self._parse_payload(topic, payload_as_string, tags, False)
 
         except Exception as e:
-            logging.error('Encountered error in mqtt message handler: '+str(e))
+            logging.error('Encountered error in mqtt message handler for topic "{}": {}'.format(msg.topic, str(e)))
 
     def _parse_payload(self, topic, payload, tags, already_json_parsed=False):
         def map_key(val):
             try:
                 return topic['key_map'][val]
-            except KeyError:
+            except (KeyError, TypeError):
                 return val
 
         def map_value(val):
             try:
                 return topic['value_map'][val]
-            except KeyError:
+            except (KeyError, TypeError):
                 return val
 
         if topic['measurement'] == 'from_json_keys':
             if not already_json_parsed:
                 payload = json.loads(payload)
             for k,v in payload.items():
-                v = map_value(v)
-                if isinstance(v, numbers.Number):
-                    self._send_sensor_data_to_influxdb(map_key(k), tags, v)
+                if 'json_keys_include' not in topic or k in topic['json_keys_include']:
+                    v = map_value(v)
+                    if isinstance(v, numbers.Number):
+                        self._send_sensor_data_to_influxdb(map_key(k), tags, v)
         else:
             self._send_sensor_data_to_influxdb(topic['measurement'], tags, map_value(payload))
 
