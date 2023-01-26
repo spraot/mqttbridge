@@ -31,7 +31,7 @@ class MqttBridge():
     mqtt_server_port = 1883
     mqtt_server_user = ''
     mqtt_server_password = ''
-    name = 'influxbridge'
+    mqtt_base_topic = 'influxbridge'
     state_topic = ''
 
     influxdb_address = 'influxdb'
@@ -69,13 +69,13 @@ class MqttBridge():
         with open(self.config_file, 'r') as f:
             config = yaml.safe_load(f)
 
-        for key in ['name', 'mqtt_server_ip', 'mqtt_server_port', 'mqtt_server_user', 'mqtt_server_password', 'influxdb_address', 'influxdb_user', 'influxdb_password', 'influxdb_database']:
+        for key in ['mqtt_base_topic', 'mqtt_server_ip', 'mqtt_server_port', 'mqtt_server_user', 'mqtt_server_password', 'influxdb_address', 'influxdb_user', 'influxdb_password', 'influxdb_database']:
             try:
                 self.__setattr__(key, config[key])
             except KeyError:
                 pass
 
-        self.state_topic = self.name + '/state'
+        self.state_topic = self.mqtt_base_topic + '/state'
 
         for input in config['input']:
             mqtt_topic = input['topic']
