@@ -31,6 +31,7 @@ class MqttBridge():
     mqtt_server_port = 1883
     mqtt_server_user = ''
     mqtt_server_password = ''
+    name = 'influxbridge'
     state_topic = ''
 
     influxdb_address = 'influxdb'
@@ -68,11 +69,13 @@ class MqttBridge():
         with open(self.config_file, 'r') as f:
             config = yaml.safe_load(f)
 
-        for key in ['state_topic', 'mqtt_server_ip', 'mqtt_server_port', 'mqtt_server_user', 'mqtt_server_password', 'influxdb_address', 'influxdb_user', 'influxdb_password', 'influxdb_database']:
+        for key in ['name', 'mqtt_server_ip', 'mqtt_server_port', 'mqtt_server_user', 'mqtt_server_password', 'influxdb_address', 'influxdb_user', 'influxdb_password', 'influxdb_database']:
             try:
                 self.__setattr__(key, config[key])
             except KeyError:
                 pass
+
+        self.state_topic = self.name + '/state'
 
         for input in config['input']:
             mqtt_topic = input['topic']
@@ -140,8 +143,8 @@ class MqttBridge():
             for topic in self.topics:
                 client.subscribe(topic['mqtt_topic'])
 
-            if self.state_topic:
-                self.mqttclient.publish(self.state_topic, payload='running', qos=0, retain=True)
+            self.mqttclient.publish(self.state_topic, payload='{"state": "online"}', qos=1, retain=True)
+            self.mqttclient.will_set(self.state_topic, payload='{"state": "offline"}', qos=1, retain=True)
         except Exception as e:
             logging.error('Encountered error in mqtt connect handler: '+str(e))
 
