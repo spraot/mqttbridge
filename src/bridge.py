@@ -52,6 +52,7 @@ class MqttBridge():
         #influxdb init
         self.influxdb_clients = []
         for db in self.influxdb:
+            logging.info('Influx client at {}'.format(db['url']))
             client = InfluxDBClient(**{k: v for k, v in db.items() if k != 'bucket'})
             self.influxdb_clients.append(client)
         
