@@ -1,13 +1,18 @@
-mqtt_server_ip: localhost
+mqtt_server_ip: mosquitto
 mqtt_server_port: 1883
 mqtt_server_user: mqtt
-mqtt_server_password: ''
+mqtt_server_password: 'pass'
 state_topic: db_bridge/state
 
-influxdb_address: localhost
-influxdb_user: root
-influxdb_password: root
-influxdb_database: house_db
+influxdb:
+  - url: https://location.aws.cloud2.influxdata.com
+    token: 'token=='
+    org: Home
+    bucket: this_db
+  - url: influxdb
+    user: root
+    password: root
+    bucket: this_db
 
 input:
   - topic: 'zigbee2mqtt/{location}/temp_sensor'

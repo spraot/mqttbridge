@@ -16,7 +16,9 @@ import numbers
 import atexit
 from jsonpath_ng import jsonpath, parse
 import paho.mqtt.client as mqtt
-from influxdb import InfluxDBClient
+import influxdb_client
+from influxdb_client import InfluxDBClient, Point
+from influxdb_client.client.write_api import SYNCHRONOUS
 
 
 class SensorData(NamedTuple):
@@ -34,16 +36,13 @@ class MqttBridge():
     mqtt_base_topic = 'influxbridge'
     state_topic = ''
 
-    influxdb_address = 'influxdb'
-    influxdb_user = 'root'
-    influxdb_password = 'root'
-    influxdb_database = 'house_db'
-
     topics = []
     
     def __init__(self):
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO'), format='%(asctime)s;<%(levelname)s>;%(message)s')
         logging.info('Init')
+
+        self.influxdb = []
 
         if len(sys.argv) > 1:
             self.config_file = sys.argv[1]
@@ -51,7 +50,10 @@ class MqttBridge():
         self.load_config()
 
         #influxdb init
-        self.influxdb_client = InfluxDBClient(self.influxdb_address, 8086, self.influxdb_user, self.influxdb_password, None)
+        self.influxdb_clients = []
+        for db in self.influxdb:
+            client = InfluxDBClient(**{k: v for k, v in db.items() if k != 'bucket'})
+            self.influxdb_clients.append(client)
         
         #MQTT init
         self.mqttclient = mqtt.Client()
@@ -69,13 +71,15 @@ class MqttBridge():
         with open(self.config_file, 'r') as f:
             config = yaml.safe_load(f)
 
-        for key in ['mqtt_base_topic', 'mqtt_server_ip', 'mqtt_server_port', 'mqtt_server_user', 'mqtt_server_password', 'influxdb_address', 'influxdb_user', 'influxdb_password', 'influxdb_database']:
+        for key in ['mqtt_base_topic', 'mqtt_server_ip', 'mqtt_server_port', 'mqtt_server_user', 'mqtt_server_password', 'influxdb']:
             try:
                 self.__setattr__(key, config[key])
             except KeyError:
                 pass
 
         self.state_topic = self.mqtt_base_topic + '/state'
+
+        logging.debug('Found {} influx db sinks'.format(len(self.influxdb)))
 
         for input in config['input']:
             mqtt_topic = input['topic']
@@ -198,23 +202,17 @@ class MqttBridge():
             self._send_sensor_data_to_influxdb(topic['measurement'], tags, map_value(payload))
 
     def _send_sensor_data_to_influxdb(self, measurement, tags, value):
-        json_body = [
-            {
-                'measurement': measurement,
-                'tags': tags,
-                'fields': {
-                    'value': float(value)
-                }
-            }
-        ]
-        logging.debug('Adding data point to db: '+json.dumps(json_body))
-        self.influxdb_client.write_points(json_body)
+        point = Point(measurement)
+        point.field('value', value)
+        for k,v in tags.items():
+            point.tag(k, v)
+        logging.debug('Adding data point to db: '+str(point))
+
+        for db, write_api in zip(self.influxdb, self.write_apis):
+            write_api.write(bucket=db['bucket'], org=db['org'], record=point)
 
     def _init_influxdb_database(self):
-        databases = self.influxdb_client.get_list_database()
-        if len(list(filter(lambda x: x['name'] == self.influxdb_database, databases))) == 0:
-            self.influxdb_client.create_database(self.influxdb_database)
-        self.influxdb_client.switch_database(self.influxdb_database)
+        self.write_apis = [client.write_api(write_options=SYNCHRONOUS) for client in self.influxdb_clients]
 
 if __name__ == '__main__':
     mqttBridge =  MqttBridge()

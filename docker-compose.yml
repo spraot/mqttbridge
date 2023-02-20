@@ -2,10 +2,11 @@ version: '3'
 
 services:
   mqttbridge:
+    container_name: mqttbridge
     build: .
     restart: unless-stopped
     network_mode: host
     volumes:
       - ./config.yml:/config.yml
-#    environment:
-#      - LOGLEVEL=DEBUG
+    environment:
+      - LOGLEVEL=DEBUG
