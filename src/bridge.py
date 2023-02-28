@@ -116,6 +116,15 @@ class MqttBridge():
             except KeyError:
                 pass
             
+            try:
+                len(input['json_keys_exclude'])
+                topic['json_keys_exclude'] = input['json_keys_exclude']
+            except KeyError:
+                pass
+
+            if 'json_keys_include' in topic and 'json_keys_exclude' in topic:
+                raise ValueError('Only one of json_keys_include and json_keys_exclude can be given')
+            
             self.topics.append(topic)
 
     def start(self):
@@ -190,12 +199,18 @@ class MqttBridge():
                 return topic['value_map'][val]
             except (KeyError, TypeError):
                 return val
+            
+        def include_filter(key):
+            return 'json_keys_include' not in topic or k in topic['json_keys_include']
+            
+        def exclude_filter(key):
+            return 'json_keys_exclude' not in topic or k not in topic['json_keys_exclude']
 
         if topic['measurement'] == 'from_json_keys':
             if not already_json_parsed:
                 payload = json.loads(payload)
             for k,v in payload.items():
-                if 'json_keys_include' not in topic or k in topic['json_keys_include']:
+                if include_filter(k) and exclude_filter(k):
                     v = map_value(v)
                     if isinstance(v, numbers.Number):
                         self._send_sensor_data_to_influxdb(map_key(k), tags, v)
