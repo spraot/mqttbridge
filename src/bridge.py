@@ -10,21 +10,13 @@ import re
 import json
 import yaml
 import time
-from typing import NamedTuple
 import logging
-import numbers
 import atexit
 from jsonpath_ng import jsonpath, parse
 import paho.mqtt.client as mqtt
 import influxdb_client
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
-
-
-class SensorData(NamedTuple):
-    location: str
-    measurement: str
-    value: float
 
 
 class MqttBridge():
@@ -91,6 +83,12 @@ class MqttBridge():
                 except KeyError:
                     return default
 
+            def get_string_or_array(key):
+                val = input[key]
+                if not isinstance(val, list):
+                    return [val]
+                return val
+
             topic = {
                 'mqtt_topic': re.sub(r'\{\w+\}', '+', mqtt_topic),
                 'regex': '^'+re.sub(r'\{\w+\}', '([^/]+)', mqtt_topic)+'$',
@@ -111,19 +109,36 @@ class MqttBridge():
                 pass
             
             try:
-                len(input['json_keys_include'])
-                topic['json_keys_include'] = input['json_keys_include']
+                topic['json_keys_include'] = get_string_or_array('json_keys_include')
             except KeyError:
                 pass
             
             try:
-                len(input['json_keys_exclude'])
-                topic['json_keys_exclude'] = input['json_keys_exclude']
+                topic['json_keys_exclude'] = get_string_or_array('json_keys_exclude')
             except KeyError:
                 pass
 
             if 'json_keys_include' in topic and 'json_keys_exclude' in topic:
                 raise ValueError('Only one of json_keys_include and json_keys_exclude can be given')
+
+            def compile_regexes(typ):
+                re_arr = [re.compile(s) for s in get_string_or_array(typ)]
+                def do_test(key):
+                    for r in re_arr:
+                        if r.fullmatch(key):
+                            return True
+                    return False
+                return do_test
+            
+            try:
+                topic['integer_keys'] = compile_regexes('integer_keys')
+            except KeyError:
+                topic['integer_keys'] = lambda key: False
+            
+            try:
+                topic['string_keys'] = compile_regexes('string_keys')
+            except KeyError:
+                topic['string_keys'] = lambda key: False
             
             self.topics.append(topic)
 
@@ -200,22 +215,45 @@ class MqttBridge():
             except (KeyError, TypeError):
                 return val
             
-        def include_filter(key):
-            return 'json_keys_include' not in topic or k in topic['json_keys_include']
+        def include_filter(val):
+            return 'json_keys_include' not in topic or val in topic['json_keys_include']
             
-        def exclude_filter(key):
-            return 'json_keys_exclude' not in topic or k not in topic['json_keys_exclude']
+        def exclude_filter(val):
+            return 'json_keys_exclude' not in topic or val not in topic['json_keys_exclude']
+        
+        def apply_type(key, val):
+            try:
+                if topic['integer_keys'](key):
+                    logging.debug(f'{key} will be typecast to int')
+                    return int(val)
+            except KeyError:
+                pass
+            try:
+                if topic['string_keys'](key):
+                    logging.debug(f'{key} will be typecast to str')
+                    return str(val)
+            except KeyError:
+                pass
+
+            logging.debug(f'{key} will be typecast to float')
+            return float(val)
 
         if topic['measurement'] == 'from_json_keys':
             if not already_json_parsed:
                 payload = json.loads(payload)
             for k,v in payload.items():
-                if include_filter(k) and exclude_filter(k):
-                    v = map_value(v)
-                    if isinstance(v, numbers.Number):
-                        self._send_sensor_data_to_influxdb(map_key(k), tags, v)
+                try:
+                    if include_filter(k) and exclude_filter(k):
+                        v = map_value(v)
+                        k = map_key(k)
+                        try:
+                            self._send_sensor_data_to_influxdb(k, tags, apply_type(k, v))
+                        except ValueError:
+                            pass
+                except Exception as e:
+                    logging.error(f'Error processing measurement "{k}" from topic "{topic}": {str(e)}')
         else:
-            self._send_sensor_data_to_influxdb(topic['measurement'], tags, map_value(payload))
+            self._send_sensor_data_to_influxdb(topic['measurement'], tags, apply_type(k, map_value(payload)))
 
     def _send_sensor_data_to_influxdb(self, measurement, tags, value):
         point = Point(measurement)
