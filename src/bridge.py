@@ -143,6 +143,16 @@ class MqttBridge():
             except KeyError:
                 topic['string_keys'] = lambda key: False
             
+            try:
+                topic['float_keys'] = compile_regexes('float_keys')
+            except KeyError:
+                topic['float_keys'] = lambda key: False
+            
+            try:
+                topic['boolean_keys'] = compile_regexes('boolean_keys')
+            except KeyError:
+                topic['boolean_keys'] = lambda key: False
+            
             self.topics.append(topic)
 
     def start(self):
@@ -231,10 +241,25 @@ class MqttBridge():
                     return int(val)
             except KeyError:
                 pass
+
             try:
                 if topic['string_keys'](key):
                     logging.debug(f'{key} will be typecast to str')
                     return str(val)
+            except KeyError:
+                pass
+            
+            try:
+                if topic['float_keys'](key):
+                    logging.debug(f'{key} will be typecast to float')
+                    return float(val)
+            except KeyError:
+                pass
+            
+            try:
+                if isinstance(val, bool) or topic['boolean_keys'](key):
+                    logging.debug(f'{key} will be typecast to bool')
+                    return bool(val)
             except KeyError:
                 pass
 
