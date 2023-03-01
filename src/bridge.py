@@ -12,9 +12,8 @@ import yaml
 import time
 import logging
 import atexit
-from jsonpath_ng import jsonpath, parse
+from jsonpath_ng import parse
 import paho.mqtt.client as mqtt
-import influxdb_client
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 
@@ -44,11 +43,12 @@ class MqttBridge():
         #influxdb init
         self.influxdb_clients = []
         for db in self.influxdb:
-            logging.info('Influx client at {}'.format(db['url']))
+            logging.info('Influx server at {}'.format(db['url']))
             client = InfluxDBClient(**{k: v for k, v in db.items() if k != 'bucket'})
             self.influxdb_clients.append(client)
         
         #MQTT init
+        logging.info('MQTT server at {}:{}'.format(self.mqtt_server_ip, self.mqtt_server_port))
         self.mqttclient = mqtt.Client()
         self.mqttclient.on_connect = self.mqtt_on_connect
         self.mqttclient.on_message = self.mqtt_on_message
@@ -71,6 +71,9 @@ class MqttBridge():
                 pass
 
         self.state_topic = self.mqtt_base_topic + '/state'
+
+        if not isinstance(self.influxdb, list):
+            self.influxdb = [self.influxdb]
 
         logging.debug('Found {} influx db sinks'.format(len(self.influxdb)))
 
