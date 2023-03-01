@@ -275,7 +275,7 @@ class MqttBridge():
                 except Exception as e:
                     logging.error(f'Error processing measurement "{k}" from topic "{topic}": {str(e)}')
         else:
-            self._send_sensor_data_to_influxdb(topic['measurement'], tags, apply_type(k, map_value(payload)))
+            self._send_sensor_data_to_influxdb(topic['measurement'], tags, apply_type(topic['measurement'], map_value(payload)))
 
     def _send_sensor_data_to_influxdb(self, measurement, tags, value):
         point = Point(measurement)
