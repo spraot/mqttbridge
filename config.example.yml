@@ -2,7 +2,7 @@ mqtt_server_ip: mosquitto
 mqtt_server_port: 1883
 mqtt_server_user: mqtt
 mqtt_server_password: 'pass'
-state_topic: db_bridge/state
+mqtt_base_topic: db_bridge
 
 influxdb:
   - url: https://location.aws.cloud2.influxdata.com
