@@ -132,7 +132,7 @@ class MqttBridge():
 
             def compile_regexes(typ):
                 re_arr = [re.compile(s) for s in [
-                        *get_string_or_array(config, typ, False)
+                        *get_string_or_array(config, typ, False),
                         *get_string_or_array(topic, typ, False)
                     ]]
                 def do_test(key):
