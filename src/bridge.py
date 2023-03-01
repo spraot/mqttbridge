@@ -61,6 +61,18 @@ class MqttBridge():
     def load_config(self):
         logging.info('Reading config from '+self.config_file)
 
+        def get_string_or_array(cfg, key, throw=True):
+            try:
+                val = cfg[key]
+            except KeyError as e:
+                if throw:
+                    raise e
+                else:
+                    val = []
+            if not isinstance(val, list):
+                return [val]
+            return val
+
         with open(self.config_file, 'r') as f:
             config = yaml.safe_load(f)
 
@@ -86,12 +98,6 @@ class MqttBridge():
                 except KeyError:
                     return default
 
-            def get_string_or_array(key):
-                val = input[key]
-                if not isinstance(val, list):
-                    return [val]
-                return val
-
             topic = {
                 'mqtt_topic': re.sub(r'\{\w+\}', '+', mqtt_topic),
                 'regex': '^'+re.sub(r'\{\w+\}', '([^/]+)', mqtt_topic)+'$',
@@ -112,12 +118,12 @@ class MqttBridge():
                 pass
             
             try:
-                topic['json_keys_include'] = get_string_or_array('json_keys_include')
+                topic['json_keys_include'] = get_string_or_array(topic, 'json_keys_include')
             except KeyError:
                 pass
             
             try:
-                topic['json_keys_exclude'] = get_string_or_array('json_keys_exclude')
+                topic['json_keys_exclude'] = get_string_or_array(topic, 'json_keys_exclude')
             except KeyError:
                 pass
 
@@ -125,7 +131,10 @@ class MqttBridge():
                 raise ValueError('Only one of json_keys_include and json_keys_exclude can be given')
 
             def compile_regexes(typ):
-                re_arr = [re.compile(s) for s in get_string_or_array(typ)]
+                re_arr = [re.compile(s) for s in [
+                        *get_string_or_array(config, typ, False)
+                        *get_string_or_array(topic, typ, False)
+                    ]]
                 def do_test(key):
                     for r in re_arr:
                         if r.fullmatch(key):
@@ -133,25 +142,10 @@ class MqttBridge():
                     return False
                 return do_test
             
-            try:
-                topic['integer_keys'] = compile_regexes('integer_keys')
-            except KeyError:
-                topic['integer_keys'] = lambda key: False
-            
-            try:
-                topic['string_keys'] = compile_regexes('string_keys')
-            except KeyError:
-                topic['string_keys'] = lambda key: False
-            
-            try:
-                topic['float_keys'] = compile_regexes('float_keys')
-            except KeyError:
-                topic['float_keys'] = lambda key: False
-            
-            try:
-                topic['boolean_keys'] = compile_regexes('boolean_keys')
-            except KeyError:
-                topic['boolean_keys'] = lambda key: False
+            topic['integer_keys'] = compile_regexes('integer_keys')
+            topic['float_keys'] = compile_regexes('float_keys')
+            topic['boolean_keys'] = compile_regexes('boolean_keys')
+            topic['string_keys'] = compile_regexes('string_keys')
             
             self.topics.append(topic)
 
