@@ -12,6 +12,7 @@ import yaml
 import time
 import logging
 import atexit
+from flatdict import FlatDict
 from jsonpath_ng import parse
 import paho.mqtt.client as mqtt
 from influxdb_client import InfluxDBClient, Point
@@ -257,12 +258,19 @@ class MqttBridge():
             except KeyError:
                 pass
 
+            if isinstance(val, dict):
+                return {map_key(k): apply_type(k, map_value(v)) for k, v in val.items()}
+            
             logging.debug(f'{key} will be typecast to float')
             return float(val)
 
         if topic['measurement'] == 'from_json_keys':
             if not already_json_parsed:
-                payload = json.loads(payload)
+                try:
+                    payload = json.loads(payload)
+                except json.decoder.JSONDecodeError:
+                    raise ValueError('could not parse payload as JSON')
+
             for k,v in payload.items():
                 try:
                     if include_filter(k) and exclude_filter(k):
@@ -279,7 +287,12 @@ class MqttBridge():
 
     def _send_sensor_data_to_influxdb(self, measurement, tags, value):
         point = Point(measurement)
-        point.field('value', value)
+        if isinstance(value, dict):
+            for k,v in FlatDict(value, '.').items():
+                point.field(k, v)
+        else:
+            point.field('value', value)
+            
         for k,v in tags.items():
             point.tag(k, v)
         logging.debug('Adding data point to db: '+str(point))
