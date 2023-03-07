@@ -10,6 +10,7 @@ import re
 import json
 import yaml
 import time
+import signal
 import logging
 import atexit
 from flatdict import FlatDict
@@ -18,6 +19,14 @@ import paho.mqtt.client as mqtt
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 
+class GracefulKiller:
+  kill_now = False
+  def __init__(self):
+    signal.signal(signal.SIGINT, self.exit_gracefully)
+    signal.signal(signal.SIGTERM, self.exit_gracefully)
+
+  def exit_gracefully(self, *args):
+    self.kill_now = True
 
 class MqttBridge():
     config_file = 'config.yml'
@@ -33,6 +42,8 @@ class MqttBridge():
     def __init__(self):
         logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO'), format='%(asctime)s;<%(levelname)s>;%(message)s')
         logging.info('Init')
+
+        self.killer = GracefulKiller()
 
         self.influxdb = []
 
@@ -161,16 +172,15 @@ class MqttBridge():
         self.mqttclient.connect(self.mqtt_server_ip, self.mqtt_server_port, 60)
         logging.info('MQTT client started')
 
-        self.mqttclient.loop_forever()
+        logging.info('started')
+        
+        while not self.killer.kill_now:
+            time.sleep(0.5)
 
     def programend(self):
         logging.info('stopping')
 
-        if self.state_topic:
-            self.mqttclient.publish(self.state_topic, payload='stopped', qos=0, retain=True)   
-
         self.mqttclient.disconnect()
-        time.sleep(0.5)
         logging.info('stopped')
 
     def mqtt_on_connect(self, client, userdata, flags, rc):
@@ -178,6 +188,7 @@ class MqttBridge():
             logging.info('MQTT client connected with result code '+str(rc))
 
             for topic in self.topics:
+                logging.debug(f"Subscribing to topic: {topic['mqtt_topic']}")
                 client.subscribe(topic['mqtt_topic'])
 
             self.mqttclient.publish(self.state_topic, payload='{"state": "online"}', qos=1, retain=True)
