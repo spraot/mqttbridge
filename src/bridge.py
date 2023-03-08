@@ -16,7 +16,7 @@ import atexit
 from flatdict import FlatDict
 from jsonpath_ng import parse
 import paho.mqtt.client as mqtt
-from influxdb_client import InfluxDBClient, Point
+from influxdb_client import InfluxDBClient, Point, WriteOptions
 from influxdb_client.client.write_api import SYNCHRONOUS
 
 class GracefulKiller:
@@ -27,6 +27,10 @@ class GracefulKiller:
 
   def exit_gracefully(self, *args):
     self.kill_now.set()
+    
+def safe_serialize(obj):
+  default = lambda o: f"<<non-serializable: {type(o).__qualname__}>>"
+  return json.dumps(obj, default=default)
 
 class MqttBridge():
     config_file = 'config.yml'
@@ -36,6 +40,7 @@ class MqttBridge():
     mqtt_server_password = ''
     mqtt_base_topic = 'influxbridge'
     state_topic = ''
+    write_apis = []
 
     topics = []
     
@@ -74,17 +79,14 @@ class MqttBridge():
         logging.info('Reading config from '+self.config_file)
 
         def get_string_or_array(cfg, key, throw=True):
-            try:
-                val = cfg[key]
-            except KeyError as e:
-                if throw:
-                    raise e
-                else:
-                    val = []
+            if not throw and key not in cfg:
+                return []
+            
+            val = cfg[key]
             if not isinstance(val, list):
                 return [val]
             return val
-
+        
         with open(self.config_file, 'r') as f:
             config = yaml.safe_load(f)
 
@@ -116,11 +118,10 @@ class MqttBridge():
                 'tags': get('tags', {}),
                 'topic_tags': [m.group(1) for m in re.finditer(r'\{(\w+)\}', mqtt_topic)],
                 'measurement': get('measurement', 'from_json_keys'),
+                'fields': get('fields', 'value'),
                 'key_map': get('key_map', {}),
                 'value_map': get('value_map', {})
             }
-
-            logging.debug(json.dumps(topic))
 
             topic['regex'] = re.compile(topic['regex'])
 
@@ -129,23 +130,16 @@ class MqttBridge():
             except KeyError:
                 pass
             
-            try:
-                topic['json_keys_include'] = get_string_or_array(topic, 'json_keys_include')
-            except KeyError:
-                pass
-            
-            try:
-                topic['json_keys_exclude'] = get_string_or_array(topic, 'json_keys_exclude')
-            except KeyError:
-                pass
+            topic['json_keys_include'] = get_string_or_array(input, 'json_keys_include', False)
+            topic['json_keys_exclude'] = get_string_or_array(input, 'json_keys_exclude', False)
 
-            if 'json_keys_include' in topic and 'json_keys_exclude' in topic:
+            if topic['json_keys_include'] and topic['json_keys_exclude']:
                 raise ValueError('Only one of json_keys_include and json_keys_exclude can be given')
 
             def compile_regexes(typ):
                 re_arr = [re.compile(s) for s in [
                         *get_string_or_array(config, typ, False),
-                        *get_string_or_array(topic, typ, False)
+                        *get_string_or_array(input, typ, False)
                     ]]
                 def do_test(key):
                     for r in re_arr:
@@ -159,6 +153,18 @@ class MqttBridge():
             topic['boolean_keys'] = compile_regexes('boolean_keys')
             topic['string_keys'] = compile_regexes('string_keys')
             
+            topic['tags_from_json'] = get_string_or_array(input, 'tags_from_json', False)
+            if not topic['json_keys_include']:
+                topic['json_keys_exclude'].extend(topic['tags_from_json'])
+
+            if topic['tags_from_json'] and topic['measurement'] == 'from_json_keys':
+                raise ValueError('Only one of tags_from_json and measurement=from_json_keys can be given')
+
+            if topic['fields'] == 'from_json_keys' and topic['measurement'] == 'from_json_keys':
+                raise ValueError('Only one of fields=from_json_keys and measurement=from_json_keys can be given')
+            
+            logging.debug(safe_serialize(topic))
+
             self.topics.append(topic)
 
     def start(self):
@@ -174,17 +180,18 @@ class MqttBridge():
         logging.info('MQTT client started')
 
         logging.info('Starting main thread')
-        self.main_thread = threading.Thread(name='main', target=self.main)
-        self.main_thread.start()
-        logging.info('started')
+        self.main()
 
     def main(self):
+        logging.info('started')
         while not self.killer.kill_now.is_set():
             self.killer.kill_now.wait(10)
         sys.exit()
 
     def programend(self):
         logging.info('stopping')
+        for write_api in self.write_apis:
+            write_api.close()
         self.mqttclient.disconnect()
         logging.info('stopped')
 
@@ -224,9 +231,11 @@ class MqttBridge():
                         self._parse_payload(topic, payload_as_string, tags, False)
 
         except Exception as e:
-            logging.error('Encountered error in mqtt message handler for topic "{}": {}'.format(msg.topic, str(e)))
+            logging.error('Encountered error in mqtt message handler for topic "{}": {}'.format(msg.topic, e))
 
     def _parse_payload(self, topic, payload, tags, already_json_parsed=False):
+        tags = {**tags}
+
         def map_key(val):
             try:
                 return topic['key_map'][val]
@@ -240,10 +249,10 @@ class MqttBridge():
                 return val
             
         def include_filter(val):
-            return 'json_keys_include' not in topic or val in topic['json_keys_include']
+            return not topic['json_keys_include'] or val in topic['json_keys_include']
             
         def exclude_filter(val):
-            return 'json_keys_exclude' not in topic or val not in topic['json_keys_exclude']
+            return not topic['json_keys_exclude'] or val not in topic['json_keys_exclude']
         
         def apply_type(key, val):
             try:
@@ -275,31 +284,29 @@ class MqttBridge():
                 pass
 
             if isinstance(val, dict):
-                return {map_key(k): apply_type(k, map_value(v)) for k, v in val.items()}
+                tags.update({k: v for k, v in val.items() if k in topic['tags_from_json']})
+                return {map_key(k): apply_type(k, map_value(v)) for k, v in val.items() if include_filter(k) and exclude_filter(k)}
             
             logging.debug(f'{key} will be typecast to float')
             return float(val)
 
-        if topic['measurement'] == 'from_json_keys':
+        if topic['measurement'] == 'from_json_keys' or topic['fields'] == 'from_json_keys':
             if not already_json_parsed:
                 try:
                     payload = json.loads(payload)
                 except json.decoder.JSONDecodeError:
                     raise ValueError('could not parse payload as JSON')
 
-            for k,v in payload.items():
-                try:
-                    if include_filter(k) and exclude_filter(k):
-                        v = map_value(v)
-                        k = map_key(k)
-                        try:
-                            self._send_sensor_data_to_influxdb(k, tags, apply_type(k, v))
-                        except (ValueError, TypeError):
-                            pass
-                except Exception as e:
-                    logging.error(f'Error processing measurement {k}: {str(e)}')
+            if not isinstance(payload, dict):
+                raise ValueError('payload is not a JSON object, could not parse with from_json_keys')
+            
+        payload = apply_type('@root', map_value(payload))
+
+        if topic['measurement'] == 'from_json_keys':
+            for k, v in payload.items():
+                self._send_sensor_data_to_influxdb(k, tags, v)
         else:
-            self._send_sensor_data_to_influxdb(topic['measurement'], tags, apply_type(topic['measurement'], map_value(payload)))
+            self._send_sensor_data_to_influxdb(topic['measurement'], tags, map_value(payload))
 
     def _send_sensor_data_to_influxdb(self, measurement, tags, value):
         point = Point(measurement)
@@ -317,7 +324,14 @@ class MqttBridge():
             write_api.write(bucket=db['bucket'], org=db['org'], record=point)
 
     def _init_influxdb_database(self):
-        self.write_apis = [client.write_api(write_options=SYNCHRONOUS) for client in self.influxdb_clients]
+        self.write_apis = [client.write_api(write_options=WriteOptions(batch_size=100,
+                                                      flush_interval=30_000,
+                                                      jitter_interval=2_000,
+                                                      retry_interval=5_000,
+                                                      max_retries=7,
+                                                      max_retry_delay=3_000_000,
+                                                      max_retry_time=6_000_000,
+                                                      exponential_base=3)) for client in self.influxdb_clients]
 
 if __name__ == '__main__':
     mqttBridge =  MqttBridge()
