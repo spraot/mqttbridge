@@ -9,7 +9,7 @@ import sys
 import re
 import json
 import yaml
-import time
+import threading
 import signal
 import logging
 import atexit
@@ -20,13 +20,13 @@ from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 
 class GracefulKiller:
-  kill_now = False
   def __init__(self):
+    self.kill_now = threading.Event()
     signal.signal(signal.SIGINT, self.exit_gracefully)
     signal.signal(signal.SIGTERM, self.exit_gracefully)
 
   def exit_gracefully(self, *args):
-    self.kill_now = True
+    self.kill_now.set()
 
 class MqttBridge():
     config_file = 'config.yml'
@@ -170,16 +170,21 @@ class MqttBridge():
         logging.info('Starting MQTT client')
         self.mqttclient.username_pw_set(self.mqtt_server_user, password=self.mqtt_server_password)
         self.mqttclient.connect(self.mqtt_server_ip, self.mqtt_server_port, 60)
+        self.mqttclient.loop_start()
         logging.info('MQTT client started')
 
+        logging.info('Starting main thread')
+        self.main_thread = threading.Thread(name='main', target=self.main)
+        self.main_thread.start()
         logging.info('started')
-        
-        while not self.killer.kill_now:
-            time.sleep(0.5)
+
+    def main(self):
+        while not self.killer.kill_now.is_set():
+            self.killer.kill_now.wait(10)
+        sys.exit()
 
     def programend(self):
         logging.info('stopping')
-
         self.mqttclient.disconnect()
         logging.info('stopped')
 
