@@ -1,5 +1,5 @@
 paho-mqtt==1.6.1
 PyYAML>=5.4
-influxdb-client==1.36.0
+influxdb-client==1.36.1
 jsonpath-ng==1.5.2
 flatdict==4.0.1

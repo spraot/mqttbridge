@@ -15,6 +15,7 @@ import logging
 import atexit
 from flatdict import FlatDict
 from jsonpath_ng import parse
+import paho
 import paho.mqtt.client as mqtt
 from influxdb_client import InfluxDBClient, Point, WriteOptions
 from influxdb_client.client.write_api import SYNCHRONOUS
@@ -38,6 +39,7 @@ class MqttBridge():
     mqtt_server_port = 1883
     mqtt_server_user = ''
     mqtt_server_password = ''
+    client_id = ''
     mqtt_base_topic = 'influxbridge'
     state_topic = ''
     write_apis = []
@@ -66,7 +68,7 @@ class MqttBridge():
         
         #MQTT init
         logging.info('MQTT server at {}:{}'.format(self.mqtt_server_ip, self.mqtt_server_port))
-        self.mqttclient = mqtt.Client()
+        self.mqttclient = mqtt.Client(client_id=self.client_id, protocol=paho.mqtt.client.MQTTv5)
         self.mqttclient.on_connect = self.mqtt_on_connect
         self.mqttclient.on_message = self.mqtt_on_message
 
@@ -90,9 +92,11 @@ class MqttBridge():
         with open(self.config_file, 'r') as f:
             config = yaml.safe_load(f)
 
-        for key in ['mqtt_base_topic', 'mqtt_server_ip', 'mqtt_server_port', 'mqtt_server_user', 'mqtt_server_password', 'influxdb']:
+        for key in ['mqtt_base_topic', 'mqtt_server_ip', 'mqtt_server_port', 'mqtt_server_user', 'mqtt_server_password', 'influxdb', 'client_id']:
             try:
                 self.__setattr__(key, config[key])
+                if key not in ['mqtt_server_password', 'influxdb']:
+                    logging.debug(f"{key}={config[key]}")
             except KeyError:
                 pass
 
@@ -172,10 +176,15 @@ class MqttBridge():
 
         self._init_influxdb_database()
 
+        connect_args = {}
+
+        if self.client_id:
+            connect_args['clean_start'] = False
+
         #MQTT startup
         logging.info('Starting MQTT client')
         self.mqttclient.username_pw_set(self.mqtt_server_user, password=self.mqtt_server_password)
-        self.mqttclient.connect(self.mqtt_server_ip, self.mqtt_server_port, 60)
+        self.mqttclient.connect_async(self.mqtt_server_ip, self.mqtt_server_port, 60, **connect_args)
         self.mqttclient.loop_start()
         logging.info('MQTT client started')
 
@@ -186,22 +195,23 @@ class MqttBridge():
         logging.info('started')
         while not self.killer.kill_now.is_set():
             self.killer.kill_now.wait(10)
+
+        logging.info('stopping')
+        self.mqttclient.disconnect()
+        for write_api in self.write_apis:
+            write_api.close()
         sys.exit()
 
     def programend(self):
-        logging.info('stopping')
-        for write_api in self.write_apis:
-            write_api.close()
-        self.mqttclient.disconnect()
         logging.info('stopped')
 
-    def mqtt_on_connect(self, client, userdata, flags, rc):
+    def mqtt_on_connect(self, client, userdata, flags, reasonCode, properties):
         try:
-            logging.info('MQTT client connected with result code '+str(rc))
+            logging.info('MQTT client connected with reason code '+str(reasonCode))
 
             for topic in self.topics:
                 logging.debug(f"Subscribing to topic: {topic['mqtt_topic']}")
-                client.subscribe(topic['mqtt_topic'])
+            client.subscribe([(t['mqtt_topic'], 2) for t in self.topics])
 
             self.mqttclient.publish(self.state_topic, payload='{"state": "online"}', qos=1, retain=True)
             self.mqttclient.will_set(self.state_topic, payload='{"state": "offline"}', qos=1, retain=True)
