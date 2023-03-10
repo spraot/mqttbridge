@@ -4,10 +4,12 @@
 This script receives MQTT data and saves those to InfluxDB.
 """
 
+from datetime import datetime, timezone
 import os
 import sys
 import re
 import json
+from urllib3 import PoolManager
 import yaml
 import threading
 import signal
@@ -19,6 +21,7 @@ import paho
 import paho.mqtt.client as mqtt
 from influxdb_client import InfluxDBClient, Point, WriteOptions
 from influxdb_client.client.write_api import SYNCHRONOUS
+from requests.adapters import Retry
 
 class GracefulKiller:
   def __init__(self):
@@ -52,7 +55,12 @@ class MqttBridge():
 
         self.killer = GracefulKiller()
 
-        self.influxdb = []
+        retries = Retry(total=5,
+                        backoff_factor=4,
+                        status_forcelist=[ 500, 502, 503, 504 ])
+        self.http = PoolManager(retries=retries)
+
+        self.influxdb2 = []
 
         if len(sys.argv) > 1:
             self.config_file = sys.argv[1]
@@ -60,11 +68,11 @@ class MqttBridge():
         self.load_config()
 
         #influxdb init
-        self.influxdb_clients = []
-        for db in self.influxdb:
-            logging.info('Influx server at {}'.format(db['url']))
+        self.influxdb2_clients = []
+        for db in self.influxdb2:
+            logging.info('Influx v2 server at {}'.format(db['url']))
             client = InfluxDBClient(**{k: v for k, v in db.items() if k != 'bucket'})
-            self.influxdb_clients.append(client)
+            self.influxdb2_clients.append(client)
         
         #MQTT init
         logging.info('MQTT server at {}:{}'.format(self.mqtt_server_ip, self.mqtt_server_port))
@@ -92,20 +100,26 @@ class MqttBridge():
         with open(self.config_file, 'r') as f:
             config = yaml.safe_load(f)
 
-        for key in ['mqtt_base_topic', 'mqtt_server_ip', 'mqtt_server_port', 'mqtt_server_user', 'mqtt_server_password', 'influxdb', 'client_id']:
+        for key in ['mqtt_base_topic', 'mqtt_server_ip', 'mqtt_server_port', 'mqtt_server_user', 'mqtt_server_password', 'httpsink_url', 'client_id']:
             try:
-                self.__setattr__(key, config[key])
-                if key not in ['mqtt_server_password', 'influxdb']:
-                    logging.debug(f"{key}={config[key]}")
+                val = config[key]
+                if key.startswith('influxdb'):
+                    if not isinstance(val, list):
+                        val = [val]
+                    if key == 'influxdb':
+                        key += '2'
+                    self.__getattribute__(key).extend(val)
+                else:
+                    self.__setattr__(key, val)
+
+                    if key not in ['mqtt_server_password']:
+                        logging.debug(f"{key}={val}")
             except KeyError:
                 pass
 
         self.state_topic = self.mqtt_base_topic + '/state'
 
-        if not isinstance(self.influxdb, list):
-            self.influxdb = [self.influxdb]
-
-        logging.debug('Found {} influx db sinks'.format(len(self.influxdb)))
+        logging.debug('Found {} influx db sinks'.format(len(self.influxdb2)))
 
         for input in config['input']:
             mqtt_topic = input['topic']
@@ -219,6 +233,7 @@ class MqttBridge():
             logging.error('Encountered error in mqtt connect handler: '+str(e))
 
     def mqtt_on_message(self, client, userdata, msg):
+        dt = datetime.now(timezone.utc)
         try:
             payload_as_string = msg.payload.decode('utf-8')
             logging.debug('Received MQTT message on topic: ' + msg.topic + ', payload: ' + payload_as_string + ', retained: ' + str(msg.retain))
@@ -236,14 +251,14 @@ class MqttBridge():
                     if 'jsonpath' in topic:
                         payload_json = json.loads(payload_as_string)
                         for m in topic['jsonpath'].find(payload_json):
-                            self._parse_payload(topic, m.value, tags, True)
+                            self._parse_payload(topic, m.value, tags, dt, True)
                     else:
-                        self._parse_payload(topic, payload_as_string, tags, False)
+                        self._parse_payload(topic, payload_as_string, tags, dt, False)
 
         except Exception as e:
-            logging.error('Encountered error in mqtt message handler for topic "{}": {}'.format(msg.topic, e))
+            logging.exception('Encountered error in mqtt message handler for topic "{}": {}'.format(msg.topic, e))
 
-    def _parse_payload(self, topic, payload, tags, already_json_parsed=False):
+    def _parse_payload(self, topic, payload, tags, dt, already_json_parsed=False):
         tags = {**tags}
 
         def map_key(val):
@@ -314,23 +329,28 @@ class MqttBridge():
 
         if topic['measurement'] == 'from_json_keys':
             for k, v in payload.items():
-                self._send_sensor_data_to_influxdb(k, tags, v)
+                self._send_sensor_data_to_influxdb(k, tags, v, dt)
         else:
-            self._send_sensor_data_to_influxdb(topic['measurement'], tags, map_value(payload))
+            self._send_sensor_data_to_influxdb(topic['measurement'], tags, map_value(payload), dt)
 
-    def _send_sensor_data_to_influxdb(self, measurement, tags, value):
+    def _send_sensor_data_to_influxdb(self, measurement, tags, value, dt):
         point = Point(measurement)
-        if isinstance(value, dict):
-            for k,v in FlatDict(value, '.').items():
-                point.field(k, v)
-        else:
-            point.field('value', value)
-            
+        point.time(dt, write_precision='ms')
         for k,v in tags.items():
             point.tag(k, v)
-        logging.debug('Adding data point to db: '+str(point))
+        if isinstance(value, dict):
+            point._fields.update(FlatDict(value, '.').as_dict())
+        else:
+            point.fields('value', value)
 
-        for db, write_api in zip(self.influxdb, self.write_apis):
+        logging.debug('value = '+json.dumps(point._fields))
+
+        point_str = point.to_line_protocol()
+        logging.debug('Adding data point to db: '+point_str)
+        if self.httpsink_url:
+            self.http.request('POST', self.httpsink_url, body=point_str)
+
+        for db, write_api in zip(self.influxdb2, self.write_apis):
             write_api.write(bucket=db['bucket'], org=db['org'], record=point)
 
     def _init_influxdb_database(self):
@@ -341,7 +361,7 @@ class MqttBridge():
                                                       max_retries=7,
                                                       max_retry_delay=3_000_000,
                                                       max_retry_time=6_000_000,
-                                                      exponential_base=3)) for client in self.influxdb_clients]
+                                                      exponential_base=3)) for client in self.influxdb2_clients]
 
 if __name__ == '__main__':
     mqttBridge =  MqttBridge()
