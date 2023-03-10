@@ -341,9 +341,7 @@ class MqttBridge():
         if isinstance(value, dict):
             point._fields.update(FlatDict(value, '.').as_dict())
         else:
-            point.fields('value', value)
-
-        logging.debug('value = '+json.dumps(point._fields))
+            point.field('value', value)
 
         point_str = point.to_line_protocol()
         logging.debug('Adding data point to db: '+point_str)
