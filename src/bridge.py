@@ -225,7 +225,7 @@ class MqttBridge():
 
             for topic in self.topics:
                 logging.debug(f"Subscribing to topic: {topic['mqtt_topic']}")
-            client.subscribe([(t['mqtt_topic'], 2) for t in self.topics])
+            self.mqttclient.subscribe([(t['mqtt_topic'], 2) for t in self.topics])
 
             self.mqttclient.publish(self.state_topic, payload='{"state": "online"}', qos=1, retain=True)
             self.mqttclient.will_set(self.state_topic, payload='{"state": "offline"}', qos=1, retain=True)
@@ -339,10 +339,12 @@ class MqttBridge():
         for k,v in tags.items():
             point.tag(k, v)
         if isinstance(value, dict):
-            point._fields.update(FlatDict(value, '.').as_dict())
+            logging.debug('Flattening dict structure')
+            point._fields.update(FlatDict(value, '.'))
         else:
             point.field('value', value)
 
+        logging.debug('Adding data point to db: '+json.dumps(point._fields))
         point_str = point.to_line_protocol()
         logging.debug('Adding data point to db: '+point_str)
         if self.httpsink_url:
