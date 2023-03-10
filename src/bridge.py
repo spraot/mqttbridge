@@ -10,6 +10,7 @@ import sys
 import re
 import json
 from urllib3 import PoolManager
+from urllib3.util import Retry
 import yaml
 import threading
 import signal
@@ -21,7 +22,6 @@ import paho
 import paho.mqtt.client as mqtt
 from influxdb_client import InfluxDBClient, Point, WriteOptions
 from influxdb_client.client.write_api import SYNCHRONOUS
-from requests.adapters import Retry
 
 class GracefulKiller:
   def __init__(self):
