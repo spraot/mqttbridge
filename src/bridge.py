@@ -71,7 +71,7 @@ class MqttBridge():
         self.influxdb2_clients = []
         for db in self.influxdb2:
             logging.info('Influx v2 server at {}'.format(db['url']))
-            client = InfluxDBClient(write_precision=WritePrecision.MS, **{k: v for k, v in db.items() if k != 'bucket'})
+            client = InfluxDBClient(**{k: v for k, v in db.items() if k != 'bucket'})
             self.influxdb2_clients.append(client)
         
         #MQTT init
@@ -335,7 +335,7 @@ class MqttBridge():
 
     def _send_sensor_data_to_influxdb(self, measurement, tags, value, dt):
         point = Point(measurement)
-        point.time(dt, write_precision=WritePrecision.MS)
+        point.time(dt)
         for k,v in tags.items():
             point.tag(k, v)
         if isinstance(value, dict):
