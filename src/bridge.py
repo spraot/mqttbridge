@@ -20,7 +20,7 @@ from flatdict import FlatDict
 from jsonpath_ng import parse
 import paho
 import paho.mqtt.client as mqtt
-from influxdb_client import InfluxDBClient, Point, WriteOptions
+from influxdb_client import InfluxDBClient, Point, WriteOptions, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
 
 class GracefulKiller:
@@ -71,7 +71,7 @@ class MqttBridge():
         self.influxdb2_clients = []
         for db in self.influxdb2:
             logging.info('Influx v2 server at {}'.format(db['url']))
-            client = InfluxDBClient(**{k: v for k, v in db.items() if k != 'bucket'})
+            client = InfluxDBClient(write_precision=WritePrecision.MS, **{k: v for k, v in db.items() if k != 'bucket'})
             self.influxdb2_clients.append(client)
         
         #MQTT init
@@ -335,7 +335,7 @@ class MqttBridge():
 
     def _send_sensor_data_to_influxdb(self, measurement, tags, value, dt):
         point = Point(measurement)
-        point.time(dt, write_precision='ms')
+        point.time(dt, write_precision=WritePrecision.MS)
         for k,v in tags.items():
             point.tag(k, v)
         if isinstance(value, dict):
