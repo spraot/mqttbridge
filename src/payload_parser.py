@@ -17,16 +17,9 @@ class PayloadParser:
             for i, tag in enumerate(self.schema['topic_tags']):
                 tags[tag] = match.group(i+1)
 
-            if 'jsonpath' in self.schema:
-                payload_json = json.loads(payload)
-                for m in self.schema['jsonpath'].find(payload_json):
-                    self._parse_payload(m.value, tags, True)
-            else:
-                self._parse_payload(payload, tags, False)
+            self._parse_payload(payload, tags, False)
 
     def _parse_payload(self, payload, tags, already_json_parsed=False):
-        tags = {**tags}
-
         if self.schema['measurement'] == 'from_json_keys' or self.schema['fields'] == 'from_json_keys':
             if not already_json_parsed:
                 try:

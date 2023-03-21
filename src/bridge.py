@@ -18,7 +18,6 @@ import threading
 import signal
 import logging
 import atexit
-from jsonpath_ng import parse
 import paho
 import paho.mqtt.client as mqtt
 from influxdb_client import InfluxDBClient, Point, WriteOptions, WritePrecision
@@ -157,11 +156,6 @@ class MqttBridge():
                 schema['repeat_last'] = input['repeat_last']
                 if not isinstance(schema['repeat_last'], numbers.Number) or schema['repeat_last'] <= 0:
                     raise ValueError('repeat_last must be a number larger than 0')
-            except KeyError:
-                pass
-
-            try:
-                schema['jsonpath'] = parse(input['jsonpath'])
             except KeyError:
                 pass
             
