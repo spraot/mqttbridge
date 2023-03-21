@@ -142,15 +142,11 @@ class MqttBridge():
                 'fields': get('fields', 'value'),
                 'key_map': get('key_map', {}),
                 'value_map': get('value_map', {}),
-                'last_dt': datetime(1,1,1)
+                'last': {},
+                'repeat_last_expiry': 3600*24*7,
             }
 
             schema['regex'] = re.compile(schema['regex'])
-
-            try:
-                schema['last_points'] = [Point.from_dict(x) for x in input['last_points']]
-            except KeyError:
-                pass
 
             try:
                 schema['repeat_last'] = input['repeat_last']
@@ -222,10 +218,11 @@ class MqttBridge():
             now = datetime.now()
             for schema in self.schemas:
                 try:
-                    total_seconds = (now - schema['last_dt']).total_seconds()
-                    if total_seconds >= schema['repeat_last']:
-                        self._send_points(schema['last_points'], datetime.now(timezone.utc))
-                        schema['last_dt'] = schema['last_dt'] + timedelta(seconds=schema['repeat_last']*floor(total_seconds / schema['repeat_last']))
+                    for last in schema['last']:
+                        total_seconds = (now - last['dt']).total_seconds()
+                        if schema['repeat_last_expiry'] > total_seconds >= schema['repeat_last']:
+                            self._send_points(last['points'], datetime.now(timezone.utc))
+                            last['dt'] = last['dt'] + timedelta(seconds=schema['repeat_last']*floor(total_seconds / schema['repeat_last']))
                 except Exception as e:
                     if not isinstance(e, KeyError):
                         logging.exception('When repeating last point, encountered error '+e)
@@ -266,8 +263,11 @@ class MqttBridge():
                 if not msg.retain:
                     self._send_points(parser.points)
 
-                schema['last_points'] = parser.points
-                schema['last_dt'] = datetime.now()
+                tag_str = json.dumps(parser.tags)
+                schema['last'][tag_str] = {
+                    'points': parser.points,
+                    'dt': datetime.now()
+                }
 
         except Exception as e:
             logging.exception('Encountered error in mqtt message handler for topic "{}": {}'.format(msg.topic, e))
