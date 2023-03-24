@@ -230,7 +230,7 @@ class MqttBridge():
                         logging.exception('When repeating last point, encountered error '+str(e))
 
             if n_repeated > 0:
-                logging.info(f'Repeated {n_repeated} data points due to repeat_last setting')
+                logging.debug(f'Repeated {n_repeated} data points due to repeat_last setting')
 
             self.killer.kill_now.wait(0.5)
 
