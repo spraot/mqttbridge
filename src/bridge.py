@@ -219,7 +219,7 @@ class MqttBridge():
             n_repeated = 0
             for schema in self.schemas:
                 try:
-                    for last in schema['last']:
+                    for last in schema['last'].values():
                         total_seconds = (now - last['dt']).total_seconds()
                         if schema['repeat_last_expiry'] > total_seconds >= schema['repeat_last']:
                             self._send_points(last['points'], datetime.now(timezone.utc))
@@ -227,7 +227,7 @@ class MqttBridge():
                             n_repeated += len(last['points'])
                 except Exception as e:
                     if not isinstance(e, KeyError):
-                        logging.exception('When repeating last point, encountered error '+e)
+                        logging.exception('When repeating last point, encountered error '+str(e))
 
             if n_repeated > 0:
                 logging.info(f'Repeated {n_repeated} data points due to repeat_last setting')

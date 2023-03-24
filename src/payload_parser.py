@@ -101,7 +101,7 @@ class PayloadParser:
 
         if isinstance(val, dict):
             self.tags.update({k: v for k, v in val.items() if k in self.schema['tags_from_json']})
-            return {self.map_key(k): self.apply_type(k, self.map_value(v), self.tags) for k, v in val.items() if self.include_filter(k) and self.exclude_filter(k)}
+            return {self.map_key(k): self.apply_type(k, self.map_value(v)) for k, v in val.items() if self.include_filter(k) and self.exclude_filter(k)}
         
         logging.debug(f'{key} will be typecast to float')
         return float(val)
