@@ -1,5 +1,6 @@
 import json
 import logging
+from math import nan
 from datetime import datetime, timezone
 from influxdb_client import Point
 from flatdict import FlatDict
@@ -72,36 +73,46 @@ class PayloadParser:
     
     def apply_type(self, key, val):
         try:
-            if self.schema['integer_keys'](key):
-                logging.debug(f'{key} will be typecast to int')
-                return int(val)
-        except KeyError:
-            pass
+            try:
+                if self.schema['integer_keys'](key):
+                    logging.debug(f'{key} will be typecast to int')
+                    return int(val)
+            except KeyError:
+                pass
 
-        try:
-            if self.schema['string_keys'](key):
-                logging.debug(f'{key} will be typecast to str')
-                return str(val)
-        except KeyError:
-            pass
-        
-        try:
-            if self.schema['float_keys'](key):
-                logging.debug(f'{key} will be typecast to float')
+            try:
+                if self.schema['string_keys'](key):
+                    logging.debug(f'{key} will be typecast to str')
+                    return str(val)
+            except KeyError:
+                pass
+            
+            try:
+                if self.schema['float_keys'](key):
+                    logging.debug(f'{key} will be typecast to float')
+                    if val is None:
+                        return nan
+                    else:
+                        return float(val)
+            except KeyError:
+                pass
+            
+            try:
+                if isinstance(val, bool) or self.schema['boolean_keys'](key):
+                    logging.debug(f'{key} will be typecast to bool')
+                    return bool(val)
+            except KeyError:
+                pass
+
+            if isinstance(val, dict):
+                self.tags.update({k: v for k, v in val.items() if k in self.schema['tags_from_json']})
+                return {self.map_key(k): self.apply_type(k, self.map_value(v)) for k, v in val.items() if self.include_filter(k) and self.exclude_filter(k)}
+            
+            logging.debug(f'{key} will be typecast to float')
+            if val is None:
+                return nan
+            else:
                 return float(val)
-        except KeyError:
-            pass
-        
-        try:
-            if isinstance(val, bool) or self.schema['boolean_keys'](key):
-                logging.debug(f'{key} will be typecast to bool')
-                return bool(val)
-        except KeyError:
-            pass
-
-        if isinstance(val, dict):
-            self.tags.update({k: v for k, v in val.items() if k in self.schema['tags_from_json']})
-            return {self.map_key(k): self.apply_type(k, self.map_value(v)) for k, v in val.items() if self.include_filter(k) and self.exclude_filter(k)}
-        
-        logging.debug(f'{key} will be typecast to float')
-        return float(val)
+        except Exception as e:
+            e.message += f' for key {key}'
+            raise e

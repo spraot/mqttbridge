@@ -275,6 +275,8 @@ class MqttBridge():
                 }
 
         except Exception as e:
+            if e.__class__.__name__ == 'TypeError':
+                logging.error('Encountered error in mqtt message handler for topic "{}": {}'.format(msg.topic, e))
             logging.exception('Encountered error in mqtt message handler for topic "{}": {}'.format(msg.topic, e))
 
     def _send_points(self, points, dt=None):
