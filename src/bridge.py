@@ -225,7 +225,7 @@ class MqttBridge():
                             self._send_points(last['points'], datetime.now(timezone.utc))
                             last['dt'] = last['dt'] + timedelta(seconds=schema['repeat_last']*floor(total_seconds / schema['repeat_last']))
                             n_repeated += len(last['points'])
-                            logging.debug(f'Repeating points:'+''.join(['\n'+str(p) for p in last["points"]]))
+                            logging.debug(f'Repeating points:'+' - '.join([str(p) for p in last["points"]]))
                 except Exception as e:
                     if not isinstance(e, KeyError):
                         logging.exception('When repeating last point, encountered error '+str(e))
