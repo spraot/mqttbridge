@@ -285,7 +285,7 @@ class MqttBridge():
             if dt:
                 point.time(dt)
 
-        point_strs = '\n'.join([point.to_line_protocol() for point in points])
+        point_strs = ' - '.join([point.to_line_protocol() for point in points])
 
         logging.debug('Adding data points to db: '+point_strs)
         if self.httpsink_url:
