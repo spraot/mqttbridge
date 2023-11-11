@@ -266,14 +266,15 @@ class MqttBridge():
                 parser = PayloadParser(schema)
                 parser.parse(msg.topic, payload_as_string)
 
-                if not msg.retain:
-                    self._send_points(parser.points)
+                if parser.points:
+                    if not msg.retain:
+                        self._send_points(parser.points)
 
-                tag_str = json.dumps(parser.tags)
-                schema['last'][tag_str] = {
-                    'points': parser.points,
-                    'dt': datetime.now()
-                }
+                    tag_str = json.dumps(parser.tags)
+                    schema['last'][tag_str] = {
+                        'points': parser.points,
+                        'dt': datetime.now()
+                    }
 
         except Exception as e:
             if e.__class__.__name__ == 'TypeError':
