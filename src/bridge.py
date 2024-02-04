@@ -132,13 +132,15 @@ class MqttBridge():
                     return input[key]
                 except KeyError:
                     return default
+                
+            topic_meas = mqtt_topic.find('{@measurement}') != -1
 
             schema = {
-                'mqtt_topic': re.sub(r'\{\w+\}', '+', mqtt_topic),
-                'regex': '^'+re.sub(r'\{\w+\}', '([^/]+)', mqtt_topic)+'$',
+                'mqtt_topic': re.sub(r'\{(\w+|\@measurement)\}', '+', mqtt_topic),
+                'regex': '^'+re.sub(r'\{(\w+|\@measurement)\}', '([^/]+)', mqtt_topic)+'$',
                 'tags': get('tags', {}),
-                'topic_tags': [m.group(1) for m in re.finditer(r'\{(\w+)\}', mqtt_topic)],
-                'measurement': get('measurement', 'from_json_keys'),
+                'topic_matches': [m.group(1) for m in re.finditer(r'\{(\w+|\@measurement)\}', mqtt_topic)],
+                'measurement': get('measurement', 'from_topic' if topic_meas else 'from_json_keys'),
                 'fields': get('fields', 'value'),
                 'key_map': get('key_map', {}),
                 'value_map': get('value_map', {}),

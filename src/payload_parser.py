@@ -16,8 +16,11 @@ class PayloadParser:
         match = self.schema['regex'].match(topic)
         if match:
             self.tags = {**self.schema['tags']}
-            for i, tag in enumerate(self.schema['topic_tags']):
-                self.tags[tag] = match.group(i+1)
+            for i, tag in enumerate(self.schema['topic_matches']):
+                if tag == '@measurement':
+                    self._topic_measurement = match.group(i+1)
+                else:
+                    self.tags[tag] = match.group(i+1)
 
             self._parse_payload(payload, False)
 
@@ -37,6 +40,8 @@ class PayloadParser:
         if self.schema['measurement'] == 'from_json_keys':
             for k, v in payload.items():
                 self._add_points(k, v)
+        elif self.schema['measurement'] == 'from_topic':
+            self._add_points(self._topic_measurement, payload)
         else:
             self._add_points(self.schema['measurement'], self.map_value(payload))
 
