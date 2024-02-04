@@ -223,7 +223,7 @@ class MqttBridge():
                         total_seconds = (now - last['dt']).total_seconds()
                         if schema['repeat_last_expiry'] > total_seconds >= schema['repeat_last']:
                             self._send_points(last['points'], datetime.now(timezone.utc))
-                            last['dt'] = last['dt'] + timedelta(seconds=schema['repeat_last']*floor(total_seconds / schema['repeat_last']))
+                            last['dt'] = last['dt'] + timedelta(seconds=schema['repeat_last']*(total_seconds // schema['repeat_last']))
                             n_repeated += len(last['points'])
                             logging.debug(f'Repeating points:'+' - '.join([str(p) for p in last["points"]]))
                 except Exception as e:
