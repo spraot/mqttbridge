@@ -119,5 +119,4 @@ class PayloadParser:
             else:
                 return float(val)
         except Exception as e:
-            e.message += f' for key {key}'
-            raise e
+            raise ValueError(f'{e} error casting type for key {key}')
