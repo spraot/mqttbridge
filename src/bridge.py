@@ -222,12 +222,19 @@ class MqttBridge():
             for schema in self.schemas:
                 try:
                     for last in schema['last'].values():
-                        total_seconds = (now - last['dt']).total_seconds()
-                        if schema['repeat_last_expiry'] > total_seconds >= schema['repeat_last']:
-                            self._send_points(last['points'], datetime.now(timezone.utc))
-                            last['dt'] = last['dt'] + timedelta(seconds=schema['repeat_last']*(total_seconds // schema['repeat_last']))
-                            n_repeated += len(last['points'])
-                            logging.debug(f'Repeating points:'+' - '.join([str(p) for p in last["points"]]))
+                        if 'repeat_last' in schema and schema['repeat_last'] > 0 \
+                            and (now - last['dt']).total_seconds() < schema['repeat_last_expiry']:
+                            
+                            if 'dt_repeated' not in last:
+                                last['dt_repeated'] = last['dt']
+
+                            total_seconds_since_repeat = (now - last['dt_repeated']).total_seconds()
+                            if total_seconds_since_repeat >= schema['repeat_last']:
+                                self._send_points(last['points'], datetime.now(timezone.utc))
+                                last['dt'] = last['dt'] + timedelta(seconds=schema['repeat_last']*(total_seconds_since_repeat // schema['repeat_last']))
+                                n_repeated += len(last['points'])
+                                logging.debug(f'Repeating points:'+' - '.join([str(p) for p in last["points"]]))
+                                
                 except Exception as e:
                     if not isinstance(e, KeyError):
                         logging.exception('When repeating last point, encountered error '+str(e))
