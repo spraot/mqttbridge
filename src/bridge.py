@@ -244,7 +244,7 @@ class MqttBridge():
                         except Exception as e:
                             last['dt'] = now
                             if not isinstance(e, KeyError):
-                                logger.exception(f'When repeating last point for {schema['mqtt_topic']}, encountered error {str(e)}')
+                                logger.exception(f'When repeating last point for {schema["mqtt_topic"]}, encountered error {str(e)}')
 
             if n_repeated > 0:
                 logger.debug(f'Repeated {n_repeated} data points due to repeat_last setting')
