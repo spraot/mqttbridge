@@ -26,9 +26,10 @@ from payload_parser import PayloadParser
 
 logger = logging.getLogger()
 logHandler = logging.StreamHandler()
-formatter = jsonlogger.JsonFormatter()
+formatter = jsonlogger.JsonFormatter('%(message)%(levelname)', timestamp='dt')
 logHandler.setFormatter(formatter)
 logger.addHandler(logHandler)
+logger.setLevel(os.environ.get('LOGLEVEL', 'INFO'))
 
 class GracefulKiller:
   def __init__(self):
@@ -58,7 +59,6 @@ class MqttBridge():
     schemas = []
     
     def __init__(self):
-        logger.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO'), format='%(asctime)s;<%(levelname)s>;%(message)s')
         logger.info('Init')
 
         self.killer = GracefulKiller()
