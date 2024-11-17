@@ -3,3 +3,4 @@ PyYAML>=5.4
 influxdb-client==1.36.1
 jsonpath-ng==1.5.2
 flatdict==4.0.1
+python-json-logger==2.0.7

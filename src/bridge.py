@@ -4,8 +4,7 @@
 This script receives MQTT data and saves those to InfluxDB.
 """
 
-from datetime import datetime, timedelta, timezone
-from math import floor
+from datetime import datetime, timezone
 import numbers
 import os
 import sys
@@ -17,13 +16,19 @@ import yaml
 import threading
 import signal
 import logging
+from pythonjsonlogger import jsonlogger
 import atexit
 import paho
 import paho.mqtt.client as mqtt
-from influxdb_client import InfluxDBClient, Point, WriteOptions, WritePrecision
-from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client import InfluxDBClient
 
 from payload_parser import PayloadParser
+
+logger = logging.getLogger()
+logHandler = logging.StreamHandler()
+formatter = jsonlogger.JsonFormatter()
+logHandler.setFormatter(formatter)
+logger.addHandler(logHandler)
 
 class GracefulKiller:
   def __init__(self):
@@ -53,8 +58,8 @@ class MqttBridge():
     schemas = []
     
     def __init__(self):
-        logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO'), format='%(asctime)s;<%(levelname)s>;%(message)s')
-        logging.info('Init')
+        logger.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO'), format='%(asctime)s;<%(levelname)s>;%(message)s')
+        logger.info('Init')
 
         self.killer = GracefulKiller()
 
@@ -73,23 +78,23 @@ class MqttBridge():
         #influxdb init
         self.influxdb2_clients = []
         for db in self.influxdb2:
-            logging.info('Influx v2 server at {}'.format(db['url']))
+            logger.info('Influx v2 server at {}'.format(db['url']))
             client = InfluxDBClient(**{k: v for k, v in db.items() if k != 'bucket'})
             self.influxdb2_clients.append(client)
         
         #MQTT init
-        logging.info('MQTT server at {}:{}'.format(self.mqtt_server_ip, self.mqtt_server_port))
+        logger.info('MQTT server at {}:{}'.format(self.mqtt_server_ip, self.mqtt_server_port))
         self.mqttclient = mqtt.Client(client_id=self.client_id, protocol=paho.mqtt.client.MQTTv5)
         self.mqttclient.on_connect = self.mqtt_on_connect
         self.mqttclient.on_message = self.mqtt_on_message
 
         #Register program end event
-        atexit.register(self.programend)
+        atexit.register(self.programed)
 
-        logging.info('init done')
+        logger.info('init done')
 
     def load_config(self):
-        logging.info('Reading config from '+self.config_file)
+        logger.info('Reading config from '+self.config_file)
 
         def get_string_or_array(cfg, key, throw=True):
             if not throw and key not in cfg:
@@ -116,13 +121,13 @@ class MqttBridge():
                     self.__setattr__(key, val)
 
                     if key not in ['mqtt_server_password']:
-                        logging.debug(f"{key}={val}")
+                        logger.debug(f"{key}={val}")
             except KeyError:
                 pass
 
         self.state_topic = self.mqtt_base_topic + '/state'
 
-        logging.debug('Found {} influx db sinks'.format(len(self.influxdb2)))
+        logger.debug('Found {} influx db sinks'.format(len(self.influxdb2)))
 
         for input in config['input']:
             mqtt_topic = input['topic']
@@ -190,12 +195,12 @@ class MqttBridge():
             if schema['fields'] == 'from_json_keys' and schema['measurement'] == 'from_json_keys':
                 raise ValueError('Only one of fields=from_json_keys and measurement=from_json_keys can be given')
             
-            logging.debug(safe_serialize(schema))
+            logger.debug(safe_serialize(schema))
 
             self.schemas.append(schema)
 
     def start(self):
-        logging.info('starting')
+        logger.info('starting')
 
         self._init_influxdb_database()
 
@@ -205,71 +210,73 @@ class MqttBridge():
             connect_args['clean_start'] = False
 
         #MQTT startup
-        logging.info('Starting MQTT client')
+        logger.info('Starting MQTT client')
         self.mqttclient.username_pw_set(self.mqtt_server_user, password=self.mqtt_server_password)
         self.mqttclient.connect_async(self.mqtt_server_ip, self.mqtt_server_port, 60, **connect_args)
         self.mqttclient.loop_start()
-        logging.info('MQTT client started')
+        logger.info('MQTT client started')
 
-        logging.info('Starting main thread')
+        logger.info('Starting main thread')
         self.main()
 
     def main(self):
-        logging.info('started')
+        logger.info('started')
         while not self.killer.kill_now.is_set():
             now = datetime.now()
             n_repeated = 0
             for schema in self.schemas:
-                try:
+                if 'last' in schema:
                     for last in schema['last'].values():
-                        if 'repeat_last' in schema and schema['repeat_last'] > 0 \
-                            and (now - last['dt']).total_seconds() < schema['repeat_last_expiry']:
-                            
-                            if 'dt_repeated' not in last:
-                                last['dt_repeated'] = last['dt']
-
-                            total_seconds_since_repeat = (now - last['dt_repeated']).total_seconds()
-                            if total_seconds_since_repeat >= schema['repeat_last']:
-                                self._send_points(last['points'], datetime.now(timezone.utc))
-                                last['dt'] = last['dt'] + timedelta(seconds=schema['repeat_last']*(total_seconds_since_repeat // schema['repeat_last']))
-                                n_repeated += len(last['points'])
-                                logging.debug(f'Repeating points:'+' - '.join([str(p) for p in last["points"]]))
+                        try:
+                            if 'repeat_last' in schema and schema['repeat_last'] > 0 \
+                                and (now - last['dt']).total_seconds() < schema['repeat_last_expiry']:
                                 
-                except Exception as e:
-                    if not isinstance(e, KeyError):
-                        logging.exception('When repeating last point, encountered error '+str(e))
+                                if 'dt_repeated' not in last:
+                                    last['dt_repeated'] = last['dt']
+
+                                total_seconds_since_repeat = (now - last['dt_repeated']).total_seconds()
+                                if total_seconds_since_repeat >= schema['repeat_last']:
+                                    self._send_points(last['points'], datetime.now(timezone.utc))
+                                    last['dt'] = now
+                                    n_repeated += len(last['points'])
+                                    logger.debug(f'Repeating points:'+' - '.join([str(p) for p in last["points"]]))
+                                    
+                        except Exception as e:
+                            last['dt'] = now
+                            if not isinstance(e, KeyError):
+                                logger.exception(f'When repeating last point for {schema['mqtt_topic']}, encountered error {str(e)}')
 
             if n_repeated > 0:
-                logging.debug(f'Repeated {n_repeated} data points due to repeat_last setting')
+                logger.debug(f'Repeated {n_repeated} data points due to repeat_last setting')
 
-            self.killer.kill_now.wait(0.5)
+            self.killer.kill_now.wait(1)
 
-        logging.info('stopping')
+        logger.info('stopping')
         self.mqttclient.disconnect()
         for write_api in self.write_apis:
             write_api.close()
         sys.exit()
 
-    def programend(self):
-        logging.info('stopped')
+    def programed(self):
+        logger.info('stopped')
 
     def mqtt_on_connect(self, client, userdata, flags, reasonCode, properties):
         try:
-            logging.info('MQTT client connected with reason code '+str(reasonCode))
+            logger.info('MQTT client connected with reason code '+str(reasonCode))
 
             for schema in self.schemas:
-                logging.debug(f"Subscribing to topic: {schema['mqtt_topic']}")
+                logger.debug(f"Subscribing to topic: {schema['mqtt_topic']}")
             self.mqttclient.subscribe([(t['mqtt_topic'], 2) for t in self.schemas])
 
             self.mqttclient.publish(self.state_topic, payload='{"state": "online"}', qos=1, retain=True)
             self.mqttclient.will_set(self.state_topic, payload='{"state": "offline"}', qos=1, retain=True)
         except Exception as e:
-            logging.error('Encountered error in mqtt connect handler: '+str(e))
+            logger.error('Encountered error in mqtt connect handler: '+str(e))
 
     def mqtt_on_message(self, client, userdata, msg):
         try:
             payload_as_string = msg.payload.decode('utf-8')
-            logging.debug('Received MQTT message on topic: ' + msg.topic + ', payload: ' + payload_as_string + ', retained: ' + str(msg.retain))
+            logger.debug('Received MQTT message on topic: ' + msg.topic + ', payload: ' + payload_as_string + ', retained: ' + str(msg.retain))
 
             for schema in self.schemas:
                 parser = PayloadParser(schema)
@@ -287,8 +294,8 @@ class MqttBridge():
 
         except Exception as e:
             if e.__class__.__name__ == 'TypeError':
-                logging.error('Encountered error in mqtt message handler for topic "{}": {}'.format(msg.topic, e))
-            logging.exception('Encountered error in mqtt message handler for topic "{}": {}'.format(msg.topic, e))
+                logger.error('Encountered error in mqtt message handler for topic "{}": {}'.format(msg.topic, e))
+            logger.exception('Encountered error in mqtt message handler for topic "{}": {}'.format(msg.topic, e))
 
     def _send_points(self, points, dt=None):
         for point in points:
@@ -297,7 +304,7 @@ class MqttBridge():
 
         point_strs = ' - '.join([point.to_line_protocol() for point in points])
 
-        logging.debug('Adding data points to db: '+point_strs)
+        logger.debug('Adding data points to db: '+point_strs)
         if self.httpsink_url:
             self.http.request('POST', self.httpsink_url, body=point_strs)
 
